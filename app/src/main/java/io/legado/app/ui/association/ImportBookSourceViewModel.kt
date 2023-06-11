@@ -29,11 +29,33 @@ class ImportBookSourceViewModel(app: Application) : BaseViewModel(app) {
     val allSources = arrayListOf<BookSource>()
     val checkSources = arrayListOf<BookSource?>()
     val selectStatus = arrayListOf<Boolean>()
+    val newSourceStatus = arrayListOf<Boolean>()
+    val updateSourceStatus = arrayListOf<Boolean>()
 
     val isSelectAll: Boolean
         get() {
             selectStatus.forEach {
                 if (!it) {
+                    return false
+                }
+            }
+            return true
+        }
+
+    val isSelectAllNew: Boolean
+        get() {
+            newSourceStatus.forEachIndexed { index, b ->
+                if (b && !selectStatus[index]) {
+                    return false
+                }
+            }
+            return true
+        }
+
+    val isSelectAllUpdate: Boolean
+        get() {
+            updateSourceStatus.forEachIndexed { index, b ->
+                if (b && !selectStatus[index]) {
                     return false
                 }
             }
@@ -105,23 +127,40 @@ class ImportBookSourceViewModel(app: Application) : BaseViewModel(app) {
                         }
                     }.onFailure {
                         GSON.fromJsonObject<BookSource>(mText).getOrThrow().let {
+                            if (it.bookSourceUrl.isEmpty()) {
+                                throw NoStackTraceException("不是书源")
+                            }
                             allSources.add(it)
                         }
                     }
                 }
+
                 mText.isJsonArray() -> GSON.fromJsonArray<BookSource>(mText).getOrThrow()
                     .let { items ->
+                        val source = items.firstOrNull() ?: return@let
+                        if (source.bookSourceUrl.isEmpty()) {
+                            throw NoStackTraceException("不是书源")
+                        }
                         allSources.addAll(items)
                     }
+
                 mText.isAbsUrl() -> {
                     importSourceUrl(mText)
                 }
+
                 mText.isUri() -> {
                     val uri = Uri.parse(mText)
-                    uri.inputStream(context).getOrThrow().let {
-                        allSources.addAll(GSON.fromJsonArray<BookSource>(it).getOrThrow())
+                    uri.inputStream(context).getOrThrow().use { inputS ->
+                        GSON.fromJsonArray<BookSource>(inputS).getOrThrow().let {
+                            val source = it.firstOrNull() ?: return@let
+                            if (source.bookSourceUrl.isEmpty()) {
+                                throw NoStackTraceException("不是书源")
+                            }
+                            allSources.addAll(it)
+                        }
                     }
                 }
+
                 else -> throw NoStackTraceException(context.getString(R.string.wrong_format))
             }
         }.onError {
@@ -140,8 +179,14 @@ class ImportBookSourceViewModel(app: Application) : BaseViewModel(app) {
             } else {
                 url(url)
             }
-        }.byteStream().let {
-            allSources.addAll(GSON.fromJsonArray<BookSource>(it).getOrThrow())
+        }.byteStream().use { body ->
+            GSON.fromJsonArray<BookSource>(body).getOrThrow().let {
+                val source = it.firstOrNull() ?: return@let
+                if (source.bookSourceUrl.isEmpty()) {
+                    throw NoStackTraceException("不是书源")
+                }
+                allSources.addAll(it)
+            }
         }
     }
 
@@ -151,6 +196,8 @@ class ImportBookSourceViewModel(app: Application) : BaseViewModel(app) {
                 val source = appDb.bookSourceDao.getBookSource(it.bookSourceUrl)
                 checkSources.add(source)
                 selectStatus.add(source == null || source.lastUpdateTime < it.lastUpdateTime)
+                newSourceStatus.add(source == null)
+                updateSourceStatus.add(source != null && source.lastUpdateTime < it.lastUpdateTime)
             }
             successLiveData.postValue(allSources.size)
         }

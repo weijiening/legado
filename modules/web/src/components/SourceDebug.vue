@@ -27,9 +27,12 @@ const store = useSourceStore();
 const printDebug = ref("");
 const searchKey = ref("");
 
-watchEffect(() => {
-  if (store.isDebuging) startDebug();
-});
+watch(
+  () => store.isDebuging,
+  () => {
+    if (store.isDebuging) startDebug();
+  }
+);
 
 const appendDebugMsg = (msg) => {
   let debugDom = document.querySelector("#debug-text");
@@ -52,4 +55,8 @@ const isBookSource = computed(() => {
 });
 </script>
 
-<style lang="scss" scoped></style>
+<style lang="scss" scoped>
+:deep(#debug-text) {
+  height: calc(100vh - 45px - 36px - 5px);
+}
+</style>

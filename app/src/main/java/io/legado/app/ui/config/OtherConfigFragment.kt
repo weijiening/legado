@@ -16,6 +16,7 @@ import io.legado.app.constant.EventBus
 import io.legado.app.constant.PreferKey
 import io.legado.app.databinding.DialogEditTextBinding
 import io.legado.app.help.config.AppConfig
+import io.legado.app.help.config.LocalConfig
 import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.prefs.fragment.PreferenceFragment
 import io.legado.app.lib.theme.primaryColor
@@ -131,7 +132,10 @@ class OtherConfigFragment : PreferenceFragment(),
                         AppConfig.sourceEditMaxLine = it
                     }
             }
+
             PreferKey.clearWebViewData -> clearWebViewData()
+            "localPassword" -> alertLocalPassword()
+            PreferKey.shrinkDatabase -> shrinkDatabase()
         }
         return super.onPreferenceTreeClick(preference)
     }
@@ -231,6 +235,15 @@ class OtherConfigFragment : PreferenceFragment(),
         }
     }
 
+    private fun shrinkDatabase() {
+        alert(R.string.sure, R.string.shrink_database) {
+            okButton {
+                viewModel.shrinkDatabase()
+            }
+            noButton()
+        }
+    }
+
     private fun clearWebViewData() {
         alert(R.string.clear_webview_data, R.string.sure_del) {
             okButton {
@@ -255,6 +268,21 @@ class OtherConfigFragment : PreferenceFragment(),
                 componentName,
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP
             )
+        }
+    }
+
+    private fun alertLocalPassword() {
+        context?.alert(R.string.set_local_password, R.string.set_local_password_summary) {
+            val editTextBinding = DialogEditTextBinding.inflate(layoutInflater).apply {
+                editView.hint = "password"
+            }
+            customView {
+                editTextBinding.root
+            }
+            okButton {
+                LocalConfig.password = editTextBinding.editView.text.toString()
+            }
+            cancelButton()
         }
     }
 

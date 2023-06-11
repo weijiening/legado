@@ -14,6 +14,7 @@ import io.legado.app.model.analyzeRule.AnalyzeRule
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.utils.HtmlFormatter
 import io.legado.app.utils.NetworkUtils
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.ensureActive
@@ -48,18 +49,31 @@ object BookContent {
         } else {
             nextChapterUrl
         }
-        val content = StringBuilder()
+        val contentList = arrayListOf<String>()
         val nextUrlList = arrayListOf(redirectUrl)
         val contentRule = bookSource.getContentRule()
-        val analyzeRule = AnalyzeRule(book, bookSource).setContent(body, baseUrl)
+        val analyzeRule = AnalyzeRule(book, bookSource)
+        analyzeRule.setContent(body, baseUrl)
         analyzeRule.setRedirectUrl(redirectUrl)
         analyzeRule.chapter = bookChapter
         analyzeRule.nextChapterUrl = mNextChapterUrl
         coroutineContext.ensureActive()
+        val titleRule = contentRule.title
+        if (!titleRule.isNullOrBlank()) {
+            val title = analyzeRule.runCatching {
+                getString(titleRule)
+            }.onFailure {
+                Debug.log(bookSource.bookSourceUrl, "获取标题出错, ${it.localizedMessage}")
+            }.getOrNull()
+            if (!title.isNullOrBlank()) {
+                bookChapter.title = title
+                appDb.bookChapterDao.upDate(bookChapter)
+            }
+        }
         var contentData = analyzeContent(
             book, baseUrl, redirectUrl, body, contentRule, bookChapter, bookSource, mNextChapterUrl
         )
-        content.append(contentData.first)
+        contentList.add(contentData.first)
         if (contentData.second.size == 1) {
             var nextUrl = contentData.second[0]
             while (nextUrl.isNotEmpty() && !nextUrlList.contains(nextUrl)) {
@@ -82,15 +96,19 @@ object BookContent {
                     )
                     nextUrl =
                         if (contentData.second.isNotEmpty()) contentData.second[0] else ""
-                    content.append("\n").append(contentData.first)
+                    contentList.add(contentData.first)
+                    Debug.log(bookSource.bookSourceUrl, "第${contentList.size}页完成")
                 }
             }
             Debug.log(bookSource.bookSourceUrl, "◇本章总页数:${nextUrlList.size}")
         } else if (contentData.second.size > 1) {
             Debug.log(bookSource.bookSourceUrl, "◇并发解析正文,总页数:${contentData.second.size}")
             withContext(IO) {
+                //页数太多并行访问有问题,这里判断下页数,超过5页就不并行访问
+                val asyncStart =
+                    if (contentData.second.size > 5) CoroutineStart.LAZY else CoroutineStart.DEFAULT
                 val asyncArray = Array(contentData.second.size) {
-                    async(IO) {
+                    async(IO, start = asyncStart) {
                         val urlStr = contentData.second[it]
                         val res = AnalyzeUrl(
                             mUrl = urlStr,
@@ -106,11 +124,11 @@ object BookContent {
                 }
                 asyncArray.forEach { coroutine ->
                     coroutineContext.ensureActive()
-                    content.append("\n").append(coroutine.await())
+                    contentList.add(coroutine.await())
                 }
             }
         }
-        var contentStr = content.toString()
+        var contentStr = contentList.joinToString("\n")
         //全文替换
         val replaceRegex = contentRule.replaceRegex
         if (!replaceRegex.isNullOrEmpty()) {

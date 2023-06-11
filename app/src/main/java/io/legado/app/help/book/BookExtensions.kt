@@ -4,6 +4,7 @@ package io.legado.app.help.book
 
 import android.net.Uri
 import com.script.SimpleBindings
+import com.script.rhino.RhinoScriptEngine
 import io.legado.app.constant.*
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.BaseBook
@@ -232,14 +233,35 @@ fun Book.isSameNameAuthor(other: Any?): Boolean {
 fun Book.getExportFileName(suffix: String): String {
     val jsStr = AppConfig.bookExportFileName
     if (jsStr.isNullOrBlank()) {
-        return "${name} 作者：${getRealAuthor()}.$suffix"
+        return "$name 作者：${getRealAuthor()}.$suffix"
     }
     val bindings = SimpleBindings()
     bindings["name"] = name
     bindings["author"] = getRealAuthor()
     return kotlin.runCatching {
-        SCRIPT_ENGINE.eval(jsStr, bindings).toString() + "." + suffix
+        RhinoScriptEngine.eval(jsStr, bindings).toString() + "." + suffix
     }.onFailure {
         AppLog.put("导出书名规则错误,使用默认规则\n${it.localizedMessage}", it)
     }.getOrDefault("${name} 作者：${getRealAuthor()}.$suffix")
+}
+
+/**
+ * 获取分割文件后的文件名
+ */
+fun Book.getExportFileName(suffix: String, epubIndex: Int): String {
+    val jsStr = AppConfig.bookExportFileName
+    // 默认规则
+    val default = "$name 作者：${getRealAuthor()} [${epubIndex}].$suffix"
+    if (jsStr.isNullOrBlank()) {
+        return default
+    }
+    val bindings = SimpleBindings()
+    bindings["name"] = name
+    bindings["author"] = getRealAuthor()
+    bindings["epubIndex"] = epubIndex
+    return kotlin.runCatching {
+        RhinoScriptEngine.eval(jsStr, bindings).toString() + "." + suffix
+    }.onFailure {
+        AppLog.put("导出书名规则错误,使用默认规则\n${it.localizedMessage}", it)
+    }.getOrDefault(default)
 }
