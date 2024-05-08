@@ -3,6 +3,7 @@ package io.legado.app.model.analyzeRule
 import android.annotation.SuppressLint
 import android.util.Base64
 import androidx.annotation.Keep
+import androidx.media3.common.MediaItem
 import cn.hutool.core.util.HexUtil
 import com.bumptech.glide.load.model.GlideUrl
 import com.script.SimpleBindings
@@ -18,6 +19,7 @@ import io.legado.app.exception.ConcurrentException
 import io.legado.app.help.CacheManager
 import io.legado.app.help.JsExtensions
 import io.legado.app.help.config.AppConfig
+import io.legado.app.help.exoplayer.ExoPlayerHelper
 import io.legado.app.help.glide.GlideHeaders
 import io.legado.app.help.http.*
 import io.legado.app.help.http.CookieManager.mergeCookies
@@ -25,12 +27,15 @@ import io.legado.app.utils.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import kotlin.math.max
 
 /**
  * Created by GKF on 2018/1/24.
@@ -49,6 +54,7 @@ class AnalyzeUrl(
     private val source: BaseSource? = null,
     private val ruleData: RuleDataInterface? = null,
     private val chapter: BookChapter? = null,
+    private val readTimeout: Long? = null,
     headerMapF: Map<String, String>? = null,
 ) : JsExtensions {
     companion object {
@@ -343,7 +349,7 @@ class AnalyzeUrl(
                     if (fetchRecord.frequency > cs.toInt()) {
                         return@synchronized (nextTime - System.currentTimeMillis()).toInt()
                     } else {
-                        fetchRecord.frequency = fetchRecord.frequency + 1
+                        fetchRecord.frequency += 1
                         return@synchronized 0
                     }
                 }
@@ -366,7 +372,20 @@ class AnalyzeUrl(
     private fun fetchEnd(concurrentRecord: ConcurrentRecord?) {
         if (concurrentRecord != null && !concurrentRecord.isConcurrent) {
             synchronized(concurrentRecord) {
-                concurrentRecord.frequency = concurrentRecord.frequency - 1
+                concurrentRecord.frequency -= 1
+            }
+        }
+    }
+
+    /**
+     * 获取并发记录，若处于并发限制状态下则会等待
+     */
+    private suspend fun getConcurrentRecord(): ConcurrentRecord? {
+        while (true) {
+            try {
+                return fetchStart()
+            } catch (e: ConcurrentException) {
+                delay(e.waitTime.toLong())
             }
         }
     }
@@ -374,7 +393,6 @@ class AnalyzeUrl(
     /**
      * 访问网站,返回StrResponse
      */
-    @Throws(ConcurrentException::class)
     suspend fun getStrResponseAwait(
         jsStr: String? = null,
         sourceRegex: String? = null,
@@ -383,22 +401,14 @@ class AnalyzeUrl(
         if (type != null) {
             return StrResponse(url, HexUtil.encodeHexStr(getByteArrayAwait()))
         }
-        var concurrentRecord: ConcurrentRecord?
-        while (true) {
-            try {
-                concurrentRecord = fetchStart()
-                break
-            } catch (e: ConcurrentException) {
-                delay(e.waitTime.toLong())
-            }
-        }
+        val concurrentRecord = getConcurrentRecord()
         try {
             setCookie()
             val strResponse: StrResponse
             if (this.useWebView && useWebView) {
                 strResponse = when (method) {
                     RequestMethod.POST -> {
-                        val res = getProxyClient(proxy).newCallStrResponse(retry) {
+                        val res = getClient().newCallStrResponse(retry) {
                             addHeaders(headerMap)
                             url(urlNoQuery)
                             if (fieldMap.isNotEmpty() || body.isNullOrBlank()) {
@@ -426,7 +436,7 @@ class AnalyzeUrl(
                     ).getStrResponse()
                 }
             } else {
-                strResponse = getProxyClient(proxy).newCallStrResponse(retry) {
+                strResponse = getClient().newCallStrResponse(retry) {
                     addHeaders(headerMap)
                     when (method) {
                         RequestMethod.POST -> {
@@ -455,13 +465,12 @@ class AnalyzeUrl(
             }
             return strResponse
         } finally {
-            saveCookie()
+            //saveCookie()
             fetchEnd(concurrentRecord)
         }
     }
 
     @JvmOverloads
-    @Throws(ConcurrentException::class)
     fun getStrResponse(
         jsStr: String? = null,
         sourceRegex: String? = null,
@@ -475,20 +484,11 @@ class AnalyzeUrl(
     /**
      * 访问网站,返回Response
      */
-    @Throws(ConcurrentException::class)
     suspend fun getResponseAwait(): Response {
-        var concurrentRecord: ConcurrentRecord?
-        while (true) {
-            try {
-                concurrentRecord = fetchStart()
-                break
-            } catch (e: ConcurrentException) {
-                delay(e.waitTime.toLong())
-            }
-        }
+        val concurrentRecord = getConcurrentRecord()
         try {
             setCookie()
-            val response = getProxyClient(proxy).newCallResponse(retry) {
+            val response = getClient().newCallResponse(retry) {
                 addHeaders(headerMap)
                 when (method) {
                     RequestMethod.POST -> {
@@ -510,22 +510,29 @@ class AnalyzeUrl(
             }
             return response
         } finally {
-            saveCookie()
+            //saveCookie()
             fetchEnd(concurrentRecord)
         }
     }
 
-    @Throws(ConcurrentException::class)
+    private fun getClient(): OkHttpClient {
+        val client = getProxyClient(proxy)
+        if (readTimeout == null) {
+            return client
+        }
+        return client.newBuilder()
+            .readTimeout(readTimeout, TimeUnit.MILLISECONDS)
+            .callTimeout(max(60 * 1000L, readTimeout * 2), TimeUnit.MILLISECONDS)
+            .build()
+    }
+
     fun getResponse(): Response {
         return runBlocking {
             getResponseAwait()
         }
     }
 
-    @Suppress("UnnecessaryVariable")
-    @Throws(ConcurrentException::class)
     private fun getByteArrayIfDataUri(): ByteArray? {
-        @Suppress("RegExpRedundantEscape")
         val dataUriFindResult = dataUriRegex.find(urlNoQuery)
         if (dataUriFindResult != null) {
             val dataUriBase64 = dataUriFindResult.groupValues[1]
@@ -538,7 +545,6 @@ class AnalyzeUrl(
     /**
      * 访问网站,返回ByteArray
      */
-    @Throws(ConcurrentException::class)
     suspend fun getByteArrayAwait(): ByteArray {
         getByteArrayIfDataUri()?.let {
             return it
@@ -555,7 +561,6 @@ class AnalyzeUrl(
     /**
      * 访问网站,返回InputStream
      */
-    @Throws(ConcurrentException::class)
     suspend fun getInputStreamAwait(): InputStream {
         getByteArrayIfDataUri()?.let {
             return ByteArrayInputStream(it)
@@ -563,7 +568,6 @@ class AnalyzeUrl(
         return getResponseAwait().body!!.byteStream()
     }
 
-    @Throws(ConcurrentException::class)
     fun getInputStream(): InputStream {
         return runBlocking {
             getInputStreamAwait()
@@ -638,6 +642,11 @@ class AnalyzeUrl(
     fun getGlideUrl(): GlideUrl {
         setCookie()
         return GlideUrl(url, GlideHeaders(headerMap))
+    }
+
+    fun getMediaItem(): MediaItem {
+        setCookie()
+        return ExoPlayerHelper.createMediaItem(url, headerMap)
     }
 
     fun getUserAgent(): String {

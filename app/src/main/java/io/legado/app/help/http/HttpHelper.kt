@@ -5,11 +5,24 @@ import io.legado.app.help.CacheManager
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.http.CookieManager.cookieJarHeader
 import io.legado.app.utils.NetworkUtils
-import okhttp3.*
+import okhttp3.ConnectionSpec
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.Credentials
+import okhttp3.HttpUrl
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okhttp3.internal.http.RealResponseBody
+import okhttp3.internal.http.promisesBody
+import okio.buffer
+import okio.source
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
 
 private val proxyClientCache: ConcurrentHashMap<String, OkHttpClient> by lazy {
     ConcurrentHashMap()
@@ -56,6 +69,7 @@ val okHttpClient: OkHttpClient by lazy {
         .connectionSpecs(specs)
         .followRedirects(true)
         .followSslRedirects(true)
+        .addInterceptor(OkHttpExceptionInterceptor)
         .addInterceptor(Interceptor { chain ->
             val request = chain.request()
             val builder = request.newBuilder()
@@ -71,7 +85,7 @@ val okHttpClient: OkHttpClient by lazy {
         })
         .addNetworkInterceptor { chain ->
             var request = chain.request()
-            val enableCookieJar = request.header(cookieJarHeader) !=  null
+            val enableCookieJar = request.header(cookieJarHeader) != null
 
             if (enableCookieJar) {
                 val requestBuilder = request.newBuilder()
@@ -86,14 +100,57 @@ val okHttpClient: OkHttpClient by lazy {
             }
             networkResponse
         }
-    if (!AppConst.isPlayChannel && AppConfig.isCronet) {
+    if (AppConfig.isCronet) {
         if (Cronet.loader?.install() == true) {
             Cronet.interceptor?.let {
                 builder.addInterceptor(it)
             }
         }
     }
-    builder.build()
+    builder.addInterceptor { chain ->
+        val request = chain.request()
+        val requestBuilder = request.newBuilder()
+
+        var transparentGzip = false
+        if (request.header("Accept-Encoding") == null && request.header("Range") == null) {
+            transparentGzip = true
+            requestBuilder.header("Accept-Encoding", "gzip")
+        }
+
+        val response = chain.proceed(requestBuilder.build())
+
+        val responseBody = response.body
+        if (transparentGzip && "gzip".equals(response.header("Content-Encoding"), ignoreCase = true)
+            && response.promisesBody() && responseBody != null
+        ) {
+            val responseBuilder = response.newBuilder()
+            val gzipSource = GZIPInputStream(responseBody.byteStream()).source()
+            val strippedHeaders = response.headers.newBuilder()
+                .removeAll("Content-Encoding")
+                .removeAll("Content-Length")
+                .build()
+            responseBuilder.run {
+                headers(strippedHeaders)
+                val contentType = response.header("Content-Type")
+                body(RealResponseBody(contentType, -1L, gzipSource.buffer()))
+                build()
+            }
+        } else {
+            response
+        }
+    }
+    builder.build().apply {
+        val okHttpName =
+            OkHttpClient::class.java.name.removePrefix("okhttp3.").removeSuffix("Client")
+        val executor = dispatcher.executorService as ThreadPoolExecutor
+        val threadName = "$okHttpName Dispatcher"
+        executor.threadFactory = ThreadFactory { runnable ->
+            Thread(runnable, threadName).apply {
+                isDaemon = false
+                uncaughtExceptionHandler = OkhttpUncaughtExceptionHandler
+            }
+        }
+    }
 }
 
 /**

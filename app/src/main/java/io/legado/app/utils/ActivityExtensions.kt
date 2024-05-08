@@ -12,10 +12,12 @@ import androidx.annotation.ColorInt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.DialogFragment
 import io.legado.app.R
+import io.legado.app.ui.widget.dialog.TextDialog
 
 inline fun <reified T : DialogFragment> AppCompatActivity.showDialogFragment(
     arguments: Bundle.() -> Unit = {}
 ) {
+    @Suppress("DEPRECATION")
     val dialog = T::class.java.newInstance()
     val bundle = Bundle()
     bundle.apply(arguments)
@@ -33,9 +35,18 @@ val WindowManager.windowSize: DisplayMetrics
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val windowMetrics: WindowMetrics = currentWindowMetrics
             val insets = windowMetrics.windowInsets
-                .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
-            displayMetrics.widthPixels = windowMetrics.bounds.width() - insets.left - insets.right
-            displayMetrics.heightPixels = windowMetrics.bounds.height() - insets.top - insets.bottom
+                .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            val windowWidth = windowMetrics.bounds.width()
+            val windowHeight = windowMetrics.bounds.height()
+            var insetsWidth = insets.left + insets.right
+            var insetsHeight = insets.top + insets.bottom
+            if (windowWidth > windowHeight) {
+                val tmp = insetsWidth
+                insetsWidth = insetsHeight
+                insetsHeight = tmp
+            }
+            displayMetrics.widthPixels = windowWidth - insetsWidth
+            displayMetrics.heightPixels = windowHeight - insetsHeight
         } else {
             @Suppress("DEPRECATION")
             defaultDisplay.getMetrics(displayMetrics)
@@ -79,6 +90,7 @@ fun Activity.setStatusBarColorAuto(
     setLightStatusBar(isLightBar)
 }
 
+@SuppressLint("ObsoleteSdkInt")
 fun Activity.setLightStatusBar(isLightBar: Boolean) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         window.insetsController?.let {
@@ -190,3 +202,11 @@ val Activity.navigationBarGravity: Int
         val gravity = (navigationBar?.layoutParams as? FrameLayout.LayoutParams)?.gravity
         return gravity ?: Gravity.BOTTOM
     }
+
+/**
+ * 显示目录help下的帮助文档
+ */
+fun AppCompatActivity.showHelp(fileName: String) {
+    val mdText = String(assets.open("web/help/md/${fileName}.md").readBytes())
+    showDialogFragment(TextDialog(getString(R.string.help), mdText, TextDialog.Mode.MD))
+}

@@ -1,19 +1,19 @@
 package io.legado.app.utils
 
+import android.annotation.SuppressLint
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import cn.hutool.core.lang.Validator
 import io.legado.app.constant.AppLog
 import okhttp3.internal.publicsuffix.PublicSuffixDatabase
 import splitties.systemservices.connectivityManager
-
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.SocketException
 import java.net.URL
-import java.util.*
-
-import cn.hutool.core.lang.Validator
+import java.util.BitSet
+import java.util.Enumeration
 
 @Suppress("unused", "MemberVisibilityCanBePrivate")
 object NetworkUtils {
@@ -21,6 +21,7 @@ object NetworkUtils {
     /**
      * 判断是否联网
      */
+    @SuppressLint("ObsoleteSdkInt")
     @Suppress("DEPRECATION")
     fun isAvailable(): Boolean {
         if (Build.VERSION.SDK_INT < 23) {
@@ -31,7 +32,9 @@ object NetworkUtils {
                         // 移动数据
                         mWiFiNetworkInfo.type == ConnectivityManager.TYPE_MOBILE ||
                         // 以太网
-                        mWiFiNetworkInfo.type == ConnectivityManager.TYPE_ETHERNET
+                        mWiFiNetworkInfo.type == ConnectivityManager.TYPE_ETHERNET ||
+                        // VPN
+                        mWiFiNetworkInfo.type == ConnectivityManager.TYPE_VPN
             }
         } else {
             val network = connectivityManager.activeNetwork
@@ -43,7 +46,9 @@ object NetworkUtils {
                             // 移动数据
                             nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
                             // 以太网
-                            nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                            nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                            // VPN
+                            nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
                 }
             }
         }
@@ -173,32 +178,40 @@ object NetworkUtils {
         }.getOrDefault(baseUrl)
     }
 
+    fun getDomain(url: String): String {
+        val baseUrl = getBaseUrl(url) ?: return url
+        return kotlin.runCatching {
+            URL(baseUrl).host
+        }.getOrDefault(baseUrl)
+    }
+
     /**
      * Get local Ip address.
      */
-    fun getLocalIPAddress(): InetAddress? {
-        var enumeration: Enumeration<NetworkInterface>? = null
+    fun getLocalIPAddress(): List<InetAddress> {
+        val enumeration: Enumeration<NetworkInterface>
         try {
             enumeration = NetworkInterface.getNetworkInterfaces()
         } catch (e: SocketException) {
             e.printOnDebug()
+            return mutableListOf()
         }
 
-        if (enumeration != null) {
-            while (enumeration.hasMoreElements()) {
-                val nif = enumeration.nextElement()
-                val addresses = nif.inetAddresses
-                if (addresses != null) {
-                    while (addresses.hasMoreElements()) {
-                        val address = addresses.nextElement()
-                        if (!address.isLoopbackAddress && isIPv4Address(address.hostAddress)) {
-                            return address
-                        }
+        var fallbackAddress: MutableList<InetAddress> = mutableListOf()
+
+        while (enumeration.hasMoreElements()) {
+            val nif = enumeration.nextElement()
+            val addresses = nif.inetAddresses ?: continue
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
+                if (!address.isLoopbackAddress && isIPv4Address(address.hostAddress)) {
+                    if (nif.name?.startsWith("wlan") == true) {
+                        fallbackAddress.add(address)
                     }
                 }
             }
         }
-        return null
+        return fallbackAddress
     }
 
     /**

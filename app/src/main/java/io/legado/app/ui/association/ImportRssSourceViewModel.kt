@@ -14,8 +14,16 @@ import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.http.newCallResponseBody
 import io.legado.app.help.http.okHttpClient
+import io.legado.app.help.http.unCompress
 import io.legado.app.help.source.SourceHelp
-import io.legado.app.utils.*
+import io.legado.app.utils.GSON
+import io.legado.app.utils.fromJsonArray
+import io.legado.app.utils.fromJsonObject
+import io.legado.app.utils.isAbsUrl
+import io.legado.app.utils.isJsonArray
+import io.legado.app.utils.isJsonObject
+import io.legado.app.utils.jsonPath
+import io.legado.app.utils.splitNotBlank
 
 class ImportRssSourceViewModel(app: Application) : BaseViewModel(app) {
     var isAddGroup = false
@@ -53,6 +61,7 @@ class ImportRssSourceViewModel(app: Application) : BaseViewModel(app) {
             val group = groupName?.trim()
             val keepName = AppConfig.importKeepName
             val keepGroup = AppConfig.importKeepGroup
+            val keepEnable = AppConfig.importKeepEnable
             val selectSource = arrayListOf<RssSource>()
             selectStatus.forEachIndexed { index, b ->
                 if (b) {
@@ -63,6 +72,9 @@ class ImportRssSourceViewModel(app: Application) : BaseViewModel(app) {
                         }
                         if (keepGroup) {
                             source.sourceGroup = it.sourceGroup
+                        }
+                        if (keepEnable) {
+                            source.enabled = it.enabled
                         }
                         source.customOrder = it.customOrder
                     }
@@ -141,7 +153,7 @@ class ImportRssSourceViewModel(app: Application) : BaseViewModel(app) {
             } else {
                 url(url)
             }
-        }.byteStream().let { body ->
+        }.unCompress { body ->
             val items: List<Map<String, Any>> = jsonPath.parse(body).read("$")
             for (item in items) {
                 if (!item.containsKey("sourceUrl")) {

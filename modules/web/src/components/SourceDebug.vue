@@ -31,7 +31,7 @@ watch(
   () => store.isDebuging,
   () => {
     if (store.isDebuging) startDebug();
-  }
+  },
 );
 
 const appendDebugMsg = (msg) => {
@@ -41,12 +41,17 @@ const appendDebugMsg = (msg) => {
 };
 const startDebug = async () => {
   printDebug.value = "";
-  await API.saveSource(store.currentSource);
+  try {
+    await API.saveSource(store.currentSource);
+  } catch (e) {
+    store.debugFinish()
+    throw e
+  }
   API.debug(
     store.currentSourceUrl,
     searchKey.value || store.searchKey,
     appendDebugMsg,
-    store.debugFinish
+    store.debugFinish,
   );
 };
 

@@ -5,7 +5,6 @@ import android.content.Context
 import android.util.SparseArray
 import android.view.LayoutInflater
 import android.view.ViewGroup
-import androidx.core.os.postDelayed
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -13,8 +12,9 @@ import androidx.viewbinding.ViewBinding
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.utils.buildMainHandler
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import splitties.views.onLongClick
-import java.util.*
+import java.util.Collections
 
 /**
  * Created by Invincible on 2017/11/24.
@@ -107,7 +107,11 @@ abstract class RecyclerAdapter<ITEM, VB : ViewBinding>(protected val context: Co
     }
 
     @Synchronized
-    fun setItems(items: List<ITEM>?, itemCallback: DiffUtil.ItemCallback<ITEM>) {
+    fun setItems(
+        items: List<ITEM>?,
+        itemCallback: DiffUtil.ItemCallback<ITEM>,
+        skipDiff: Boolean = false
+    ) {
         kotlin.runCatching {
             val oldItems = this.items.toList()
             val callback = object : DiffUtil.Callback() {
@@ -148,9 +152,17 @@ abstract class RecyclerAdapter<ITEM, VB : ViewBinding>(protected val context: Co
             }
             diffJob?.cancel()
             diffJob = Coroutine.async {
-                val diffResult = DiffUtil.calculateDiff(callback)
+                val diffResult = if (skipDiff) withTimeoutOrNull(500L) {
+                    DiffUtil.calculateDiff(callback)
+                } else {
+                    DiffUtil.calculateDiff(callback)
+                }
                 ensureActive()
                 handler.post {
+                    if (diffResult == null) {
+                        setItems(items)
+                        return@post
+                    }
                     if (this@RecyclerAdapter.items.isNotEmpty()) {
                         this@RecyclerAdapter.items.clear()
                     }
@@ -159,12 +171,6 @@ abstract class RecyclerAdapter<ITEM, VB : ViewBinding>(protected val context: Co
                     }
                     diffResult.dispatchUpdatesTo(this@RecyclerAdapter)
                     onCurrentListChanged()
-                }
-            }
-            handler.postDelayed(1000) {
-                if (diffJob?.isCompleted == false) {
-                    diffJob?.cancel()
-                    setItems(items)
                 }
             }
         }

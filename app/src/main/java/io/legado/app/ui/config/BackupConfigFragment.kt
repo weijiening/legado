@@ -35,9 +35,17 @@ import io.legado.app.lib.prefs.fragment.PreferenceFragment
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.ui.about.AppLogDialog
 import io.legado.app.ui.file.HandleFileContract
-import io.legado.app.ui.widget.dialog.TextDialog
 import io.legado.app.ui.widget.dialog.WaitDialog
-import io.legado.app.utils.*
+import io.legado.app.utils.applyTint
+import io.legado.app.utils.checkWrite
+import io.legado.app.utils.getPrefString
+import io.legado.app.utils.isContentScheme
+import io.legado.app.utils.launch
+import io.legado.app.utils.setEdgeEffectColor
+import io.legado.app.utils.showDialogFragment
+import io.legado.app.utils.showHelp
+import io.legado.app.utils.toEditable
+import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
@@ -94,8 +102,15 @@ class BackupConfigFragment : PreferenceFragment(),
     }
     private val restoreDoc = registerForActivityResult(HandleFileContract()) {
         it.uri?.let { uri ->
-            Coroutine.async {
+            waitDialog.setText("恢复中…")
+            waitDialog.show()
+            val task = Coroutine.async {
                 Restore.restore(appCtx, uri)
+            }.onFinally {
+                waitDialog.dismiss()
+            }
+            waitDialog.setOnCancelListener {
+                task.cancel()
             }
         }
     }
@@ -143,7 +158,7 @@ class BackupConfigFragment : PreferenceFragment(),
         listView.setEdgeEffectColor(primaryColor)
         activity?.addMenuProvider(this, viewLifecycleOwner)
         if (!LocalConfig.backupHelpVersionIsLast) {
-            showHelp()
+            showHelp("webDavHelp")
         }
     }
 
@@ -155,18 +170,13 @@ class BackupConfigFragment : PreferenceFragment(),
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
         when (menuItem.itemId) {
             R.id.menu_help -> {
-                showHelp()
+                showHelp("webDavHelp")
                 return true
             }
 
             R.id.menu_log -> showDialogFragment<AppLogDialog>()
         }
         return false
-    }
-
-    private fun showHelp() {
-        val text = String(requireContext().assets.open("help/webDavHelp.md").readBytes())
-        showDialogFragment(TextDialog(getString(R.string.help), text, TextDialog.Mode.MD))
     }
 
     override fun onDestroy() {
@@ -267,7 +277,7 @@ class BackupConfigFragment : PreferenceFragment(),
             if (backupPath.isContentScheme()) {
                 val uri = Uri.parse(backupPath)
                 val doc = DocumentFile.fromTreeUri(requireContext(), uri)
-                if (doc?.canWrite() == true) {
+                if (doc?.checkWrite() == true) {
                     waitDialog.setText("备份中…")
                     waitDialog.setOnCancelListener {
                         backupJob?.cancel()
@@ -317,7 +327,7 @@ class BackupConfigFragment : PreferenceFragment(),
                 }.onError {
                     AppLog.put("备份出错\n${it.localizedMessage}", it)
                     appCtx.toastOnUi(appCtx.getString(R.string.backup_fail, it.localizedMessage))
-                }.onFinally(Main) {
+                }.onFinally {
                     waitDialog.dismiss()
                 }
             }
@@ -335,6 +345,9 @@ class BackupConfigFragment : PreferenceFragment(),
             showRestoreDialog(requireContext())
         }.onError {
             AppLog.put("恢复备份出错WebDavError\n${it.localizedMessage}", it)
+            if (context == null) {
+                return@onError
+            }
             alert {
                 setTitle(R.string.restore)
                 setMessage("WebDavError\n${it.localizedMessage}\n将从本地备份恢复。")
@@ -343,7 +356,7 @@ class BackupConfigFragment : PreferenceFragment(),
                 }
                 cancelButton()
             }
-        }.onFinally(Main) {
+        }.onFinally {
             waitDialog.dismiss()
         }
     }
@@ -380,7 +393,7 @@ class BackupConfigFragment : PreferenceFragment(),
         }.onError {
             AppLog.put("WebDav恢复出错\n${it.localizedMessage}", it)
             appCtx.toastOnUi("WebDav恢复出错\n${it.localizedMessage}")
-        }.onFinally(Main) {
+        }.onFinally {
             waitDialog.dismiss()
         }
         waitDialog.setOnCancelListener {

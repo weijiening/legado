@@ -11,7 +11,6 @@ import androidx.recyclerview.widget.RecyclerView
 import io.legado.app.R
 import io.legado.app.base.adapter.ItemViewHolder
 import io.legado.app.base.adapter.RecyclerAdapter
-import io.legado.app.data.entities.ReplaceRule
 import io.legado.app.data.entities.TxtTocRule
 import io.legado.app.databinding.ItemTxtTocRuleBinding
 import io.legado.app.lib.theme.backgroundColor
@@ -89,7 +88,7 @@ class TxtTocRuleAdapter(context: Context, private val callBack: CallBack) :
                 bundle.keySet().map {
                     when (it) {
                         "selected" -> cbSource.isChecked = selected.contains(item)
-                        "upNmae" -> cbSource.text = item.name
+                        "upName" -> cbSource.text = item.name
                         "upExample" -> titleExample.text = item.example
                         "enabled" -> swtEnabled.isChecked = item.enable
                     }
